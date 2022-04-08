@@ -1,0 +1,66 @@
+#!/bin/bash
+
+if [ "$1" = "--help" ]; then
+  echo "download files from sap github"
+  echo "Usage: download-from-sap-github.sh GITHUB_URL GITHUB_ACCESS_TOKEN REPONAME_WITH_OWNER TAG FILENAME VERBOSE*"
+fi
+
+if [ ! -f "/usr/bin/jq" ]; then
+  echo "ERROR: jq (the commandline JSON processor) not found"
+  exit 1
+fi
+
+GITHUB_URL=$1
+if [ -z "$GITHUB_URL" ]; then
+  echo "ERROR: no GITHUB_URL found"
+  exit 1
+fi
+
+GITHUB_ACCESS_TOKEN=$2
+if [ -z "$GITHUB_ACCESS_TOKEN" ]; then
+  echo "ERROR: no GITHUB_ACCESS_TOKEN found"
+  exit 1
+fi
+
+REPONAME_WITH_OWNER=$3
+if [ -z "$REPONAME_WITH_OWNER" ]; then
+  echo "ERROR: no REPONAME_WITH_OWNER found"
+  exit 1
+fi
+
+TAG=$4
+if [ -z "$TAG" ]; then
+  echo "ERROR: no TAG found"
+  exit 1
+fi
+
+FILENAME=$5
+if [ -z "$FILENAME" ]; then
+  echo "ERROR: no FILENAME found"
+  exit 1
+fi
+
+VERBOSE=$6
+
+if [ "$TAG" = "latest" ]; then
+  API_RESPONSE=$(curl -H "Authorization: token $GITHUB_ACCESS_TOKEN" "$GITHUB_URL/api/v3/repos/$REPONAME_WITH_OWNER/releases/latest")
+
+else
+  # Retrieve asset download url from the release for the specific tag
+  API_RESPONSE=$(curl -H "Authorization: token $GITHUB_ACCESS_TOKEN" "$GITHUB_URL/api/v3/repos/$REPONAME_WITH_OWNER/releases/tags/$TAG")
+fi
+
+if [ -n "$VERBOSE" ]; then
+  echo "=============== API_RESPONSE ==============="
+  echo $API_RESPONSE
+  echo "============================================"
+fi
+
+ASSET_URL=$(echo $API_RESPONSE | jq -r --arg FILENAME "$FILENAME" '.assets[] | select(.name==$FILENAME) | .url')
+echo "=============== ASSET_URL ==============="
+echo $ASSET_URL
+echo "========================================="
+
+# Download the release asset and stream it to a file. Make sure to follow any redirects
+curl -L -s -H "Authorization: token $GITHUB_ACCESS_TOKEN" -H "Accept: application/octet-stream" \
+  "$ASSET_URL" -o "$FILENAME"

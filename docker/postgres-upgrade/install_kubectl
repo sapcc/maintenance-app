@@ -1,0 +1,29 @@
+#!/bin/bash 
+
+VERSIONS=( "$@" )
+
+# check if array is empty
+if [ ${#VERSIONS[@]} -eq 0 ]; then
+  echo "USAGE: install_kubectl VERSION [VERSION ... VERSION[:default]]" 
+else
+  # install all given versions, version can contain :latest 
+  for VERSION_STRING in "${VERSIONS[@]}"
+  do
+    # split version string by : and use first part 
+    VERSION=$(cut -d':' -f1 <<< "$VERSION_STRING")
+    # get the minor version e.g. v1.19.10 -> 1.19
+    MINOR_VERSION=$(grep -oP "[^\.|v]+\.[^\.]+" <<< "$VERSION")
+
+    echo "Install kubectl $VERSION to /usr/local/bin/kubectl-$MINOR_VERSION"
+
+    curl -Lo "/usr/local/bin/kubectl-$MINOR_VERSION" "https://storage.googleapis.com/kubernetes-release/release/$VERSION/bin/linux/amd64/kubectl" \
+      && chmod +x "/usr/local/bin/kubectl-$MINOR_VERSION" \
+      && "kubectl-$MINOR_VERSION" version --client \
+      && echo "$MINOR_VERSION" >> /etc/kubectl-versions
+
+    # link kubectl to $VERSION if it ends with :default
+    [[ "$VERSION_STRING" == *":default" ]] && \
+      ln -sf "/usr/local/bin/kubectl-$MINOR_VERSION" /usr/local/bin/kubectl && chmod +x /usr/local/bin/kubectl && kubectl version --client    
+  done
+fi
+exit 0
