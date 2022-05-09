@@ -9,28 +9,123 @@
 ## Run Docker image
 
 ```bash
-docker run -it test /bin/bash
+docker run --rm -it test /bin/bash
 ```
+
+## Uploading new image
+
+docker login keppel.eu-de-1.cloud.sap
+docker push keppel.eu-de-1.cloud.sap/ccloud/elektra-pg-upgrade:latest
 
 # Steps
 
-1. Set the right cluster and namespace
+1. Set the right cluster and namespace if you use u8s. Kubectl should work out of the box.
 
-```
+```u8s
 kc qa-de-3
 kn elektra
 ```
 
-2. Set the elektra app in maintance mode. Edit ingress controller and add following label:
+2. Set the elektra app in maintance mode. Patch ingress controller with following label:
 
-```
-ingress.kubernetes.io/temporal-redirect: https://maintenance.global.cloud.sap
-```
-
-1. Exec into backup sidecar on new pod and make one full backup:
+Set to maintenance:
 
 ```bash
-BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh
+kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect="https://maintenance.global.cloud.sap"
+```
+
+3. Scale down to 0 elektra api (from 4 replicas).
+   TODO: store the number of replicas
+
+```
+kubectl scale deployment elektra --replicas=0
+```
+
+4. Exec into backup container and make one full backup.
+   TODO need to select automatic the postgres Pod.
+
+```bash
+kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
+```
+
+5. Rewrite entrypoint so we are able to remove the db content
+
+```bash
+kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/command", "value": ["/bin/bash","-c","exec sleep inf"]}]'
+```
+
+6. Remove existing pg folder from the volume
+
+Check content:
+
+```bash
+kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c 'ls -la $PGDATA'
+```
+
+Remove content:
+
+```bash
+kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c 'rm -rf $PGDATA'
+```
+
+7. A) Image upgrade
+
+```bash
+
+```
+
+7. B) Revert entrypoint
+
+```bash
+kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/command"}]'
+```
+
+8. Backup restore
+
+```bash
+kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c '/usr/local/sbin/backup-restore'
+```
+
+9. Scale up to 4 elektra api
+
+```
+kubectl scale deployment elektra --replicas=4
+```
+
+10. Remove maintenance mode:
+
+```bash
+kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect-
+```
+
+# New test deployment
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: pg-upgrade
+  name: pg-upgrade
+  namespace: elektra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-upgrade
+  template:
+    metadata:
+      labels:
+        app: pg-upgrade
+    spec:
+      containers:
+        - image: keppel.eu-de-1.cloud.sap/ccloud/elektra-pg-upgrade:latest
+          imagePullPolicy: Always
+          name: pg-upgrade
+          securityContext:
+            runAsUser: 0
+          cmd:
+            - bash
 ```
 
 # Todos

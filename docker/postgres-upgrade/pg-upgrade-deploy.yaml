@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: pg-upgrade
+  name: pg-upgrade
+  namespace: elektra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pg-upgrade
+  template:
+    metadata:
+      labels:
+        app: pg-upgrade
+    spec:
+      containers:
+        - image: keppel.eu-de-1.cloud.sap/ccloud/elektra-pg-upgrade:latest
+          imagePullPolicy: Always
+          name: pg-upgrade
+          securityContext:
+            runAsUser: 0
+          command: ["/bin/bash", "-c", "--"]
+          args: ["while true; do sleep 30; done;"]
+
+---
+# https://jeremievallee.com/2018/05/28/kubernetes-rbac-namespace-user.html
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: elektra
+  name: postgres-admin
+rules:
+  - apiGroups: ["", "networking.k8s.io", "apps"] # "" indicates the core API group
+    resources: ["*"]
+    verbs: ["*"]
+
+---
+# PERMISSIONS to use kubectl within the container
+# I guess this needs to be adjusted ;-)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: postgres-admin-rbac
+subjects:
+  - kind: ServiceAccount
+    # Reference to upper's `metadata.name`
+    name: default
+    # Reference to upper's `metadata.namespace`
+    namespace: elektra
+roleRef:
+  kind: Role
+  name: postgres-admin
+  apiGroup: rbac.authorization.k8s.io
