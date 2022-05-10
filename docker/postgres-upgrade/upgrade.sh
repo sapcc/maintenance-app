@@ -1,40 +1,71 @@
 #!/bin/bash
 
-echo "Set the elektra app in maintance mode..."
+################ REDIRECT DASHBOARD URL TO MAINTENANCE URL ###################
+echo "===Set the elektra app in maintenance mode..."
 kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect="https://maintenance.global.cloud.sap"
 
-echo "Scale down to 0 elektra api..."
-kubectl scale deployment elektra --replicas=0
 
-echo "Exec into backup container and make one full backup..."
+################ STOP ALL ELEKTRA PODS #######################################
+echo "===Scale down to 0 elektra api..."
+# scale down elektra
+kubectl scale deployment elektra --replicas=0
+# wait until all pods are deleted
+kubectl -n elektra wait --for delete pod --selector=name=elektra 
+
+
+################ BACKUP DB ###################################################
+echo "===Exec into backup container and make one full backup..."
 kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
 
-echo "Rewrite entrypoint so we are able to remove the db content"
+
+################ DELETE OLD PGDATA ###########################################
+echo "===Rewrite entrypoint so we are able to remove the db content"
+# scale down postgres pod
 kubectl scale deployment elektra-postgresql --replicas=0
+# wait until all pods of postgres are deleted
+kubectl -n elektra wait --for delete pod --selector=app=elektra-postgresql --timeout=300s
+# change entrypoint of postrges deployment 
 kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/command", "value": ["/bin/bash","-c","exec sleep inf"]}]'
+# scale up postgres
 kubectl scale deployment elektra-postgresql --replicas=1
+# wait until all postgres pods are running
+kubectl -n elektra wait --for condition=Ready  pod --selector=app=elektra-postgresql --timeout=300s
+# after changing the entrypoint the container db is not running. 
+# So we cannot check the Available condition of deployment
+# kubectl wait deployment elektra-postgresql --for condition=Available=True --timeout=300s
 
-
-echo "Remove existing pg folder from the volume"
-# WAIT till the new postgresql pod has restarted!
-
+echo "===Remove existing pg folder from the volume"
 kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c 'rm -rf $PGDATA'
 
-# Image upgrade
 
-echo "Revert entrypoint"
+################# UPGRADE IMAGE VERSION AND REVERT ENTRYPOINT OF POSTGRES DEPLOYMENT 
+echo "===Revert entrypoint"
 kubectl scale deployment elektra-postgresql --replicas=0
+kubectl -n elektra wait --for delete pod --selector=app=elektra-postgresql --timeout=300s
 kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/command"}]'
-kubectl scale deployment elektra-postgresql --replicas=1
+# TODO change version
+############## CHANGE VERION ############
 
-echo "Backup restore automated. The interactive prompt from backup-restore will be unswered allways with the string 5. 5 is the latest backup available."
+kubectl scale deployment elektra-postgresql --replicas=1
+# kubectl -n elektra wait --for condition=Ready  pod --selector=app=elektra-postgresql --timeout=300s
+kubectl wait deployment elektra-postgresql --for condition=Available=True --timeout=300s
+
+
+################# RESTORE DB BACKUP ############################################
+echo "===Backup restore automated. The interactive prompt from backup-restore will be unswered allways with the string 5. 5 is the latest backup available."
 kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'yes 5  | backup-restore'
 
-echo "Scale up to 4 elektra api"
-kubectl scale deployment elektra --replicas=4
 
-echo "Remove maintenance mode"
+################# START ELEKTRA ################################################
+echo "===Scale up to 4 elektra api"
+kubectl scale deployment elektra --replicas=4
+# kubectl -n elektra wait --for condition=Ready  pod --selector=name=elektra --timeout=300s
+kubectl wait deployment elektra --for condition=Available=True --timeout=300s
+
+
+################# REDIRECT BACK FROM MAINTENANCE TO DASHBOARD ##################
+echo "===Remove maintenance mode"
 kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect-
 
 
-/bin/sh -c $@
+/bin/sh -c "$@"
