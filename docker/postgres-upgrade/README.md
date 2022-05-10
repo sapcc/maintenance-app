@@ -42,7 +42,6 @@ kubectl scale deployment elektra --replicas=0
 ```
 
 4. Exec into backup container and make one full backup.
-   TODO need to select automatic the postgres Pod.
 
 ```bash
 kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
@@ -51,7 +50,9 @@ kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'BACKUP_PGS
 5. Rewrite entrypoint so we are able to remove the db content
 
 ```bash
+kubectl scale deployment elektra-postgresql --replicas=0
 kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/command", "value": ["/bin/bash","-c","exec sleep inf"]}]'
+kubectl scale deployment elektra-postgresql --replicas=1
 ```
 
 6. Remove existing pg folder from the volume
@@ -63,6 +64,8 @@ kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c
 ```
 
 Remove content:
+
+WAIT till the new postgresql pod has restarted!
 
 ```bash
 kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c 'rm -rf $PGDATA'
@@ -77,18 +80,20 @@ kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c
 7. B) Revert entrypoint
 
 ```bash
+kubectl scale deployment elektra-postgresql --replicas=0
 kubectl patch deployment elektra-postgresql --type json  -p='[{"op": "remove", "path": "/spec/template/spec/containers/0/command"}]'
+kubectl scale deployment elektra-postgresql --replicas=1
 ```
 
-8. Backup restore
+8. Backup restore automated. The interactive prompt from backup-restore will be unswered allways with the string 5. 5 is the latest backup available.
 
 ```bash
-kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c '/usr/local/sbin/backup-restore'
+kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'yes 5  | backup-restore'
 ```
 
 9. Scale up to 4 elektra api
 
-```
+```bash
 kubectl scale deployment elektra --replicas=4
 ```
 

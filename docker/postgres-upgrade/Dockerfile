@@ -43,13 +43,16 @@ RUN install_kubectl ${KUBECTL_VERSIONS}
 #       kubectl scale deployment elektra --replicas=0 && \
 #       kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
 
-RUN echo -e '#!/bin/bash\n\n\
-echo "Set the elektra app in maintance mode..."\n\
-kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect="https://maintenance.global.cloud.sap"\n\
-echo "Scale down to 0 elektra api..."\n\
-kubectl scale deployment elektra --replicas=0\n\
-echo "Exec into backup container and make one full backup..."\n\
-kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c '"'"'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'"'"'\n\
-/bin/sh -c $@' >> /usr/local/bin/upgrade_db && chmod +x /usr/local/bin/upgrade_db
+# RUN echo -e '#!/bin/bash\n\n\
+# echo "Set the elektra app in maintance mode..."\n\
+# kubectl annotate ingress elektra ingress.kubernetes.io/temporal-redirect="https://maintenance.global.cloud.sap"\n\
+# echo "Scale down to 0 elektra api..."\n\
+# kubectl scale deployment elektra --replicas=0\n\
+# echo "Exec into backup container and make one full backup..."\n\
+# kubectl exec -it deploy/elektra-postgresql -c backup -- /bin/bash -c '"'"'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'"'"'\n\
+# /bin/sh -c $@' >> /usr/local/bin/upgrade_db && chmod +x /usr/local/bin/upgrade_db
 
-ENTRYPOINT [ "/usr/local/bin/upgrade_db" ]  
+COPY upgrade.sh /usr/local/bin/upgrade
+RUN chmod +x /usr/local/bin/upgrade
+
+ENTRYPOINT [ "/usr/local/bin/upgrade" ]  
