@@ -2,7 +2,7 @@
 
 echo "===1) start web server"
 # serve maintenance site
-serve -l tcp://0.0.0.0:3000 -s www &
+serve -l tcp://0.0.0.0:$PORT -s www &
 
 # get current rules from ingress
 INGRESS_ORIGIN_RULES=$(kubectl get ingress elektra -o jsonpath='{.spec.rules[*]}')
@@ -12,7 +12,7 @@ INGRESS_NEW_RULES=$(jq ".http.paths[].backend.service.name = \"$NAME\" | .http.p
 
 echo "===2) create maintenance service"
 # create a service 
-kubectl create service clusterip $NAME --tcp=80:3000 
+kubectl create service clusterip $NAME --tcp=80:$PORT 
 
 ################ REDIRECT DASHBOARD URL TO MAINTENANCE URL ###################
 echo "===3) Set the elektra app in maintenance mode... (patch ingress rules to point to maintenance service)"
