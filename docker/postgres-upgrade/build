@@ -7,4 +7,4 @@ docker build \
 --build-arg "SAP_CERT_URL=$SAP_CERT_URL" \
 --build-arg "SAP_GITHUB_ACCESS_TOKEN=$SAP_GITHUB_ACCESS_TOKEN" \
 --build-arg "SAP_GITHUB_URL=$SAP_GITHUB_URL" \
--t $DOCKERHUB_TAG/elektra-pg-upgrade -t test .
+-t $DOCKERHUB_TAG/elektra-pg-upgrade -t test -f Dockerfile ../../

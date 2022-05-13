@@ -21,8 +21,25 @@ spec:
           name: pg-upgrade
           securityContext:
             runAsUser: 0
-          command: ["/bin/bash", "-c", "--"]
-          args: ["while true; do sleep 30; done;"]
+          # TODO: remove next two lines
+          # command: ["/bin/bash", "-c", "--"]
+          # args: ["while true; do sleep 30; done;"]
+          env:
+            - name: NAME
+              value: pg-upgrade
+            - name: DB_VERSION
+              value: "12"
+            - name: INGRESS_NAME
+              value: elektra
+            - name: DEPLOYMENT_NAME
+              value: elektra-postgresql
+            - name: PVC_NAME
+              value: elektra-postgresql
+            - name: PORT
+              value: "3000"
+          ports:
+            - containerPort: 3000
+              protocol: TCP
 
 ---
 # https://jeremievallee.com/2018/05/28/kubernetes-rbac-namespace-user.html
@@ -30,9 +47,9 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   namespace: elektra
-  name: postgres-admin
+  name: pg-upgrade
 rules:
-  - apiGroups: ["", "networking.k8s.io", "apps"] # "" indicates the core API group
+  - apiGroups: ["", "*", "apps"] # "" indicates the core API group
     resources: ["*"]
     verbs: ["*"]
 
@@ -42,7 +59,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: postgres-admin-rbac
+  name: pg-upgrade
 subjects:
   - kind: ServiceAccount
     # Reference to upper's `metadata.name`
@@ -51,5 +68,5 @@ subjects:
     namespace: elektra
 roleRef:
   kind: Role
-  name: postgres-admin
+  name: pg-upgrade
   apiGroup: rbac.authorization.k8s.io
