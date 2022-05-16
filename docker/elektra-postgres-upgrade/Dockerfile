@@ -1,5 +1,4 @@
-ARG DOCKERHUB
-FROM $DOCKERHUB/alpine:3.15
+FROM keppel.eu-de-1.cloud.sap/ccloud-dockerhub-mirror/library/alpine:3.15
 
 LABEL source_repository="https://github.com/sapcc/maintenance-app"
 
@@ -8,12 +7,16 @@ RUN apk --upgrade --no-cache add git curl postgresql-client bash jq grep openssh
 ARG SAP_CERT_URL
 ARG SAP_GITHUB_ACCESS_TOKEN
 ARG SAP_GITHUB_URL
-ENV DB_VERSION="9.5"
-ENV NAME="pg-upgrade"
-ENV INGRESS_NAME=""
-ENV DEPLOYMENT_NAME=""
-ENV PVC_NAME=""
 
+ENV NAME="pg-upgrade"
+ENV PG_VERSION=""
+ENV INGRESS_NAME=""
+ENV PG_DEPLOYMENT_NAME=""
+ENV PG_PVC_NAME=""
+ENV PORT=""
+
+# copy maintenance app html files to www=""
+# For gitpages we use docs folder to host the app. The name docs is reserved for gitpages.
 ADD docs www
 RUN npm install -g serve
 

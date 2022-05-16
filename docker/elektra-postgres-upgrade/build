@@ -3,8 +3,7 @@
 source .env
 
 docker build \
---build-arg "DOCKERHUB=$DOCKERHUB" \
 --build-arg "SAP_CERT_URL=$SAP_CERT_URL" \
 --build-arg "SAP_GITHUB_ACCESS_TOKEN=$SAP_GITHUB_ACCESS_TOKEN" \
 --build-arg "SAP_GITHUB_URL=$SAP_GITHUB_URL" \
--t $DOCKERHUB_TAG/elektra-pg-upgrade -t test -f Dockerfile ../../
+-t keppel.eu-de-1.cloud.sap/ccloud/elektra-pg-upgrade -t test -f Dockerfile ../../

@@ -27,13 +27,13 @@ spec:
           env:
             - name: NAME
               value: pg-upgrade
-            - name: DB_VERSION
-              value: "12"
+            - name: PG_VERSION
+              value: "9.5"
             - name: INGRESS_NAME
               value: elektra
-            - name: DEPLOYMENT_NAME
+            - name: PG_DEPLOYMENT_NAME
               value: elektra-postgresql
-            - name: PVC_NAME
+            - name: PG_PVC_NAME
               value: elektra-postgresql
             - name: PORT
               value: "3000"

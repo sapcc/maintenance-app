@@ -1,0 +1,130 @@
+#!/bin/bash
+
+echo "===1) start web server"
+# serve maintenance site
+# use -s flag to redirect all requests to index.html in www.
+serve -l tcp://0.0.0.0:$PORT -s www &
+
+# get current rules from ingress
+INGRESS_ORIGIN_RULES=$(kubectl get ingress elektra -o jsonpath='{.spec.rules[*]}')
+
+# replace service name and port
+INGRESS_NEW_RULES=$(jq ".http.paths[].backend.service.name = \"$NAME\" | .http.paths[].backend.service.port = {\"number\":80}" <<< "$INGRESS_ORIGIN_RULES") 
+
+echo "===2) create maintenance service"
+# create a service 
+kubectl create service clusterip $NAME --tcp=80:$PORT 
+
+################ REDIRECT DASHBOARD URL TO MAINTENANCE URL ###################
+echo "===3) Set the elektra app in maintenance mode... (patch ingress rules to point to maintenance service)"
+# kubectl annotate ingress $INGRESS_NAME ingress.kubernetes.io/temporal-redirect="https://maintenance.global.cloud.sap"
+kubectl patch ingress $INGRESS_NAME -p "{\"spec\": {\"rules\":[$INGRESS_NEW_RULES]}}"
+
+
+echo "===4) exec pg container and execute backup"
+kubectl exec -it deploy/$PG_DEPLOYMENT_NAME -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
+
+# echo "===3) detirmine mount point"
+# PGDATA=$(kubectl exec -it deploy/elektra-postgresql -c elektra-postgresql -- /bin/bash -c 'echo $PGDATA')
+# VOLUME_MOUNTS=$(kubectl get deploy/elektra-postgresql -o jsonpath='{.spec.template.spec.containers[?(@.name=="elektra-postgresql")].volumeMounts}' )
+# VOLUMES=$(kubectl get pods -o jsonpath='{.items[*].spec.containers[?(@.name=="elektra-postgresql")].volumeMounts}')
+
+
+echo "===5) scale down pg pod"
+kubectl scale deployment $PG_DEPLOYMENT_NAME --replicas=0
+kubectl wait --for delete pod --selector=app=$PG_DEPLOYMENT_NAME --timeout=300s
+
+echo "===6) delete pgdata"
+
+kubectl run terminator --image busybox --rm -ti --restart=Never --overrides="
+{ 
+    \"spec\": {
+        \"containers\": [
+            {
+                \"stdin\": true,
+                \"tty\": true,
+                \"args\": [ \"sh\", \"-c\", \"rm -rf /postgresql/data\" ],
+                \"name\": \"db-terminator\",
+                \"image\": \"busybox\",
+                \"volumeMounts\": [
+                    {
+                      \"mountPath\": \"/postgresql\",
+                      \"name\": \"data\"
+                    }
+                ]
+            }
+        ],
+        \"volumes\": [
+          {
+            \"name\": \"data\",
+            \"persistentVolumeClaim\": {
+                \"claimName\": \"$PG_PVC_NAME\"
+            }
+          }
+        ]
+    }
+}
+"
+
+echo "===7) patch pg image version to $PG_VERSION"
+kubectl patch deployment $PG_DEPLOYMENT_NAME --patch "{\"spec\": {\"template\": {\"spec\": {\"containers\": [{\"name\": \"elektra-postgresql\",\"image\": \"keppel.eu-de-1.cloud.sap/ccloud/postgres:$PG_VERSION\"}]}}}}"
+
+echo "===8) scale up pg pod"
+kubectl scale deployment $PG_DEPLOYMENT_NAME --replicas=1
+kubectl wait deployment $PG_DEPLOYMENT_NAME --for condition=Available=True --timeout=300s
+
+echo "===9) restore backup"
+kubectl exec -it deploy/$PG_DEPLOYMENT_NAME -c backup -- /bin/bash -c 'yes 5  | backup-restore'
+
+echo "===10) revert redirect to maintenance"
+kubectl patch ingress $INGRESS_NAME -p "{\"spec\": {\"rules\":[$INGRESS_ORIGIN_RULES]}}"
+
+##################### CLEANUP #########################
+echo "===11) cleanup, delete $NAME service, delete $NAME deployment"
+# delete service
+# remove rolebinding created by pg-upgrade deployment afterwards. 
+# We can't delete role and rolebinding in one step. After one of that is deleted, we loose permissins.
+echo "===WARNING: please delete rolebinding $NAME"
+
+echo "
+ #     # #####   ####  #####    ##   #####  ###### #####      ####  #    #  ####   ####  ######  ####   ####  ###### #    # #      #      #   #  
+ #     # #    # #    # #    #  #  #  #    # #      #    #    #      #    # #    # #    # #      #      #      #      #    # #      #       # #   
+ #     # #    # #      #    # #    # #    # #####  #    #     ####  #    # #      #      #####   ####   ####  #####  #    # #      #        #      
+ #     # #####  #  ### #####  ###### #    # #      #    #         # #    # #      #      #           #      # #      #    # #      #        #       
+ #     # #      #    # #   #  #    # #    # #      #    #    #    # #    # #    # #    # #      #    # #    # #      #    # #      #        #    
+  #####  #       ####  #    # #    # #####  ###### #####      ####   ####   ####   ####  ######  ####   ####  #       ####  ###### ######   #                                                                                                                                                        
+" 
+
+echo "
+       _                              _       _                               _       _     _           _ _                  
+      | |                            | |     | |      _                      | |     | |   (_)         | (_)                 
+ ____ | | ____ ____  ___  ____     _ | | ____| | ____| |_  ____     ____ ___ | | ____| | _  _ ____   _ | |_ ____   ____      
+|  _ \| |/ _  ) _  |/___)/ _  )   / || |/ _  ) |/ _  )  _)/ _  )   / ___) _ \| |/ _  ) || \| |  _ \ / || | |  _ \ / _  |     
+| | | | ( (/ ( ( | |___ ( (/ /   ( (_| ( (/ /| ( (/ /| |_( (/ /   | |  | |_| | ( (/ /| |_) ) | | | ( (_| | | | | ( ( | |     
+| ||_/|_|\____)_||_(___/ \____)   \____|\____)_|\____)\___)____)  |_|   \___/|_|\____)____/|_|_| |_|\____|_|_| |_|\_|| |     
+|_|                                                                                                              (_____|     
+                                                                                                                             
+                                                                                                                             
+                                                                                                                             
+                                                                                                                             
+           _  _                         _              _           _                _                                        
+          | |(_)           _       _   | |            | |         | |              | |                _                      
+  ____  _ | | _ _   _  ___| |_    | |_ | | _   ____   | | _   ____| |____      ____| | _   ____  ____| |_   ___              
+ / _  |/ || || | | | |/___)  _)   |  _)| || \ / _  )  | || \ / _  ) |    \    / ___) || \ / _  |/ ___)  _) /___)             
+( ( | ( (_| || | |_| |___ | |__   | |__| | | ( (/ /   | | | ( (/ /| | | | |  ( (___| | | ( ( | | |   | |__|___ |             
+ \_||_|\____|| |\____(___/ \___)   \___)_| |_|\____)  |_| |_|\____)_|_|_|_|   \____)_| |_|\_||_|_|    \___|___/              
+           (__/                                                                                                              
+                                       _                                                                       _             
+ _                                _   | |                                                                     (_)            
+| |_  ___     _   _  ___  ____   | |_ | | _   ____    ____   ____ _ _ _    ____   ____    _   _ ____  ____ ___ _  ___  ____  
+|  _)/ _ \   | | | |/___)/ _  )  |  _)| || \ / _  )  |  _ \ / _  ) | | |  |  _ \ / _  |  | | | / _  )/ ___)___) |/ _ \|  _ \ 
+| |_| |_| |  | |_| |___ ( (/ /   | |__| | | ( (/ /   | | | ( (/ /| | | |  | | | ( ( | |   \ V ( (/ /| |  |___ | | |_| | | | |
+ \___)___/    \____(___/ \____)   \___)_| |_|\____)  |_| |_|\____)\____|  | ||_/ \_|| |    \_/ \____)_|  (___/|_|\___/|_| |_|
+                                                                          |_|   (_____|                                      
+"
+                                                                                                                                                                                                                            
+
+echo "=== Done, now is the time to adjust the helm charts to use pg image version $PG_VERSION"
+
+kubectl delete service,deployment,role $NAME
+
