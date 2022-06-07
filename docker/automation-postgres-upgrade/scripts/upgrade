@@ -1,0 +1,130 @@
+#!/bin/bash
+
+REGION=${1:-qa-de-1} 
+NAMESPACE=${2:-lyra} 
+PG_DEPLOYMENT_NAME="lyra-postgresql"
+API_DEPLOYMENT_NAME="lyra-api"
+WORKER_DEPLOYMENT_NAME="lyra-worker"
+PG_PVC_NAME="lyra-postgresql"
+PG_VERSION="12.11"
+
+if [[ $REGION == qa-de* ]]; then
+  IMAGE="keppel.eu-de-1.cloud.sap/ccloud/postgres:$PG_VERSION"
+else
+  IMAGE="keppel.$REGION.cloud.sap/ccloud/postgres:$PG_VERSION"
+fi
+echo "===) image to use $IMAGE"
+
+kubectl config use-context $REGION
+
+API_REPLICAS=$(kubectl -n $NAMESPACE get deployment $API_DEPLOYMENT_NAME -o jsonpath='{.spec.replicas}')
+echo "===0) found api replicas $API_REPLICAS"
+
+WORKER_REPLICAS=$(kubectl -n $NAMESPACE get deployment $WORKER_DEPLOYMENT_NAME -o jsonpath='{.spec.replicas}')
+echo "===0) found api replicas $WORKER_REPLICAS"
+
+echo "===1) exec pg container and execute backup"
+kubectl -n $NAMESPACE exec -it deploy/$PG_DEPLOYMENT_NAME -c backup -- /bin/bash -c 'BACKUP_PGSQL_FULL="1 mins" /usr/local/sbin/db-backup.sh'
+
+echo "===2 a) scale down apis pods"
+kubectl -n $NAMESPACE scale deployment $API_DEPLOYMENT_NAME --replicas=0
+kubectl -n $NAMESPACE wait --for delete pod --selector=app=$API_DEPLOYMENT_NAME --timeout=300s
+
+echo "===2 b) scale down worker pods"
+kubectl -n $NAMESPACE scale deployment $WORKER_DEPLOYMENT_NAME --replicas=0
+kubectl -n $NAMESPACE wait --for delete pod --selector=app=$WORKER_DEPLOYMENT_NAME --timeout=300s
+
+echo "===3) scale down pg pod"
+kubectl -n $NAMESPACE scale deployment $PG_DEPLOYMENT_NAME --replicas=0
+kubectl -n $NAMESPACE wait --for delete pod --selector=app=$PG_DEPLOYMENT_NAME --timeout=300s
+
+echo "===4) delete pgdata"
+kubectl -n $NAMESPACE run terminator --image busybox --rm -ti --restart=Never --overrides="
+{ 
+    \"spec\": {
+        \"containers\": [
+            {
+                \"stdin\": true,
+                \"tty\": true,
+                \"args\": [ \"sh\", \"-c\", \"cp -r /postgresql/data /postgresql/backup\" ],
+                \"name\": \"db-terminator\",
+                \"image\": \"busybox\",
+                \"volumeMounts\": [
+                    {
+                      \"mountPath\": \"/postgresql\",
+                      \"name\": \"data\"
+                    }
+                ]
+            }
+        ],
+        \"volumes\": [
+          {
+            \"name\": \"data\",
+            \"persistentVolumeClaim\": {
+                \"claimName\": \"$PG_PVC_NAME\"
+            }
+          }
+        ]
+    }
+}
+"
+
+kubectl -n $NAMESPACE run terminator --image busybox --rm -ti --restart=Never --overrides="
+{ 
+    \"spec\": {
+        \"containers\": [
+            {
+                \"stdin\": true,
+                \"tty\": true,
+                \"args\": [ \"sh\", \"-c\", \"rm -rf /postgresql/data\"],
+                \"name\": \"db-terminator\",
+                \"image\": \"busybox\",
+                \"volumeMounts\": [
+                    {
+                      \"mountPath\": \"/postgresql\",
+                      \"name\": \"data\"
+                    }
+                ]
+            }
+        ],
+        \"volumes\": [
+          {
+            \"name\": \"data\",
+            \"persistentVolumeClaim\": {
+                \"claimName\": \"$PG_PVC_NAME\"
+            }
+          }
+        ]
+    }
+}
+"
+
+echo "===5) patch pg image version to $PG_VERSION"
+kubectl -n $NAMESPACE patch deployment $PG_DEPLOYMENT_NAME --patch "{\"spec\": {\"template\": {\"spec\": {\"containers\": [{\"name\": \"$PG_DEPLOYMENT_NAME\",\"image\": \"$IMAGE\"}]}}}}"
+
+echo "===6) scale up pg pod"
+kubectl -n $NAMESPACE scale deployment $PG_DEPLOYMENT_NAME --replicas=1
+kubectl -n $NAMESPACE wait deployment $PG_DEPLOYMENT_NAME --for condition=Available=True --timeout=500s
+
+echo "===7) restore backup"
+kubectl -n $NAMESPACE exec -it deploy/$PG_DEPLOYMENT_NAME -c backup -- /bin/bash -c 'yes 5  | backup-restore'
+
+echo "===8 a) scale up worker pod"
+kubectl -n $NAMESPACE scale deployment $WORKER_DEPLOYMENT_NAME --replicas=$WORKER_REPLICAS
+kubectl -n $NAMESPACE wait deployment $WORKER_DEPLOYMENT_NAME --for condition=Available=True --timeout=300s
+
+echo "===8 b) scale up api pod"
+kubectl -n $NAMESPACE scale deployment $API_DEPLOYMENT_NAME --replicas=$API_REPLICAS
+kubectl -n $NAMESPACE wait deployment $API_DEPLOYMENT_NAME --for condition=Available=True --timeout=300s
+
+echo "
+ #     # #####   ####  #####    ##   #####  ###### #####      ####  #    #  ####   ####  ######  ####   ####  ###### #    # #      #      #   #  
+ #     # #    # #    # #    #  #  #  #    # #      #    #    #      #    # #    # #    # #      #      #      #      #    # #      #       # #   
+ #     # #    # #      #    # #    # #    # #####  #    #     ####  #    # #      #      #####   ####   ####  #####  #    # #      #        #      
+ #     # #####  #  ### #####  ###### #    # #      #    #         # #    # #      #      #           #      # #      #    # #      #        #       
+ #     # #      #    # #   #  #    # #    # #      #    #    #    # #    # #    # #    # #      #    # #    # #      #    # #      #        #    
+  #####  #       ####  #    # #    # #####  ###### #####      ####   ####   ####   ####  ######  ####   ####  #       ####  ###### ######   #                                                                                                                                                        
+" 
+
+echo "=== Done, now is the time to adjust the helm charts to use pg image version $PG_VERSION"
+
